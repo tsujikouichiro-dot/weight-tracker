@@ -276,6 +276,25 @@
     margin-top: 6px;
   }
 
+  .transfer-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  textarea#transfer-text {
+    width: 100%;
+    background: var(--input-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    margin-top: 10px;
+    resize: vertical;
+  }
+
   @media (max-width: 480px) {
     .form-row { flex-direction: column; align-items: stretch; }
     .field { flex: 1 1 auto; }
@@ -336,6 +355,20 @@
           </div>
         </form>
         <div class="settings-note">APIキーを設定すると、目標保存時にAIコーチのコメントが表示されます。キーはこの端末のブラウザ内にのみ保存されます。</div>
+      </div>
+    </details>
+  </section>
+
+  <section class="card">
+    <details class="settings">
+      <summary>データの引き継ぎ</summary>
+      <div class="settings-body">
+        <div class="transfer-row">
+          <button type="button" id="export-btn">エクスポート(コピー)</button>
+          <button type="button" id="import-btn">インポート</button>
+        </div>
+        <textarea id="transfer-text" rows="4" placeholder="エクスポート: ボタンを押すと現在の記録がここに表示され、コピーされます。&#10;インポート: 別の端末でエクスポートした文字列をここに貼り付けてボタンを押してください。"></textarea>
+        <div id="transfer-status" class="settings-note">記録データは端末ごとに保存されます。別の端末に移すときはここを使ってください(APIキーは含まれません)。</div>
       </div>
     </details>
   </section>
@@ -466,6 +499,59 @@
     var key = apiKeyInput.value.trim();
     state.apiKey = key === '' ? null : key;
     saveData(state);
+  });
+
+  // ---- Data transfer (export / import) ----
+  var exportBtn = document.getElementById('export-btn');
+  var importBtn = document.getElementById('import-btn');
+  var transferText = document.getElementById('transfer-text');
+  var transferStatus = document.getElementById('transfer-status');
+
+  exportBtn.addEventListener('click', function () {
+    var json = JSON.stringify({ goal: state.goal, entries: state.entries });
+    transferText.value = json;
+    transferStatus.textContent = '全文をコピーして、別の端末のこの欄に貼り付けてインポートしてください。';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(json).then(function () {
+        transferStatus.textContent = 'クリップボードにコピーしました。LINEやメモ経由で別の端末に送り、貼り付けてインポートしてください。';
+      }).catch(function () {});
+    }
+  });
+
+  importBtn.addEventListener('click', function () {
+    var raw = transferText.value.trim();
+    if (!raw) {
+      transferStatus.textContent = 'エクスポートした文字列を貼り付けてから押してください。';
+      return;
+    }
+    var parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      transferStatus.textContent = '読み取れませんでした。エクスポートした文字列全体を貼り付けてください。';
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object' ||
+        typeof parsed.entries !== 'object' || parsed.entries === null) {
+      transferStatus.textContent = 'データの形式が正しくありません。';
+      return;
+    }
+    var count = 0;
+    Object.keys(parsed.entries).forEach(function (d) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+      var en = parsed.entries[d];
+      if (!en || typeof en.weight !== 'number' || isNaN(en.weight)) return;
+      var fat = (typeof en.fat === 'number' && !isNaN(en.fat)) ? en.fat : null;
+      state.entries[d] = { weight: en.weight, fat: fat };
+      count++;
+    });
+    if (typeof parsed.goal === 'number' && !isNaN(parsed.goal)) {
+      state.goal = parsed.goal;
+      goalInput.value = state.goal;
+    }
+    saveData(state);
+    renderAll();
+    transferStatus.textContent = count + '件の記録を取り込みました(同じ日付は取り込んだ内容で上書き)。';
   });
 
   // ---- AI coach comment ----
