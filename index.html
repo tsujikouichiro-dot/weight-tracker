@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>体重記録トラッカー</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card-bg: #ffffff;
+    --text: #1c1c1e;
+    --text-sub: #6b7280;
+    --border: #e5e7eb;
+    --accent: #3b82f6;
+    --accent-dark: #2563eb;
+    --danger: #ef4444;
+    --danger-dark: #dc2626;
+    --up: #ef4444;
+    --down: #10b981;
+    --grid: #e5e7eb;
+    --input-bg: #ffffff;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121214;
+      --card-bg: #1e1e21;
+      --text: #f2f2f3;
+      --text-sub: #9a9aa2;
+      --border: #313136;
+      --accent: #60a5fa;
+      --accent-dark: #3b82f6;
+      --danger: #f87171;
+      --danger-dark: #ef4444;
+      --up: #f87171;
+      --down: #34d399;
+      --grid: #2c2c30;
+      --input-bg: #2a2a2e;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 16px;
+    line-height: 1.5;
+  }
+
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    margin: 4px 0 0;
+    text-align: center;
+  }
+
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: var(--shadow);
+  }
+
+  .card h2 {
+    font-size: 1.05rem;
+    margin: 0 0 12px;
+  }
+
+  .form-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: flex-end;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1 1 120px;
+  }
+
+  label {
+    font-size: 0.8rem;
+    color: var(--text-sub);
+  }
+
+  input[type="date"],
+  input[type="number"] {
+    background: var(--input-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 1rem;
+    width: 100%;
+  }
+
+  input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background 0.15s ease;
+  }
+
+  button:hover { background: var(--accent-dark); }
+
+  button.danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    padding: 5px 10px;
+    font-size: 0.82rem;
+    font-weight: 500;
+  }
+
+  button.danger:hover {
+    background: var(--danger);
+    color: #fff;
+  }
+
+  .goal-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .goal-row .field { flex: 1 1 160px; }
+
+  .tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .tab-btn {
+    background: transparent;
+    color: var(--text-sub);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    border-radius: 20px;
+  }
+
+  .tab-btn:hover { background: var(--bg); }
+
+  .tab-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  .chart-wrap {
+    position: relative;
+    height: 320px;
+  }
+
+  .chart-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-sub);
+    text-align: center;
+    padding: 20px;
+    font-size: 0.95rem;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  thead th {
+    text-align: left;
+    color: var(--text-sub);
+    font-weight: 600;
+    font-size: 0.78rem;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 8px 8px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  .diff-up { color: var(--up); font-weight: 600; }
+  .diff-down { color: var(--down); font-weight: 600; }
+  .diff-flat { color: var(--text-sub); }
+
+  .table-scroll {
+    overflow-x: auto;
+  }
+
+  .empty-msg {
+    color: var(--text-sub);
+    font-size: 0.9rem;
+    padding: 8px 0;
+  }
+
+  .coach-comment {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 0.92rem;
+    display: none;
+    line-height: 1.6;
+  }
+
+  .coach-comment.visible { display: block; }
+
+  .coach-comment .coach-icon {
+    margin-right: 6px;
+  }
+
+  .coach-comment.loading {
+    color: var(--text-sub);
+    font-style: italic;
+  }
+
+  .coach-comment.error {
+    color: var(--text-sub);
+    font-size: 0.82rem;
+  }
+
+  details.settings summary {
+    cursor: pointer;
+    font-size: 1.05rem;
+    font-weight: 600;
+    list-style-position: inside;
+  }
+
+  details.settings .settings-body {
+    margin-top: 12px;
+  }
+
+  .settings-note {
+    color: var(--text-sub);
+    font-size: 0.78rem;
+    margin-top: 6px;
+  }
+
+  @media (max-width: 480px) {
+    .form-row { flex-direction: column; align-items: stretch; }
+    .field { flex: 1 1 auto; }
+    button[type="submit"] { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>体重記録トラッカー</h1>
+
+  <section class="card">
+    <h2>今日の記録を入力</h2>
+    <form id="entry-form" class="form-row">
+      <div class="field">
+        <label for="input-date">日付</label>
+        <input type="date" id="input-date" required>
+      </div>
+      <div class="field">
+        <label for="input-weight">体重 (kg)</label>
+        <input type="number" id="input-weight" step="0.1" min="0" required placeholder="例: 68.5">
+      </div>
+      <div class="field">
+        <label for="input-fat">体脂肪率 (%)</label>
+        <input type="number" id="input-fat" step="0.1" min="0" max="100" placeholder="任意">
+      </div>
+      <div class="field" style="flex: 0 0 auto;">
+        <button type="submit">保存</button>
+      </div>
+    </form>
+    <div id="coach-comment" class="coach-comment" role="status"></div>
+  </section>
+
+  <section class="card">
+    <h2>目標体重</h2>
+    <form id="goal-form" class="goal-row">
+      <div class="field">
+        <label for="input-goal">目標体重 (kg)</label>
+        <input type="number" id="input-goal" step="0.1" min="0" placeholder="空欄で解除">
+      </div>
+      <div class="field" style="flex: 0 0 auto;">
+        <button type="submit">目標を保存</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <details class="settings">
+      <summary>設定</summary>
+      <div class="settings-body">
+        <form id="settings-form" class="goal-row">
+          <div class="field">
+            <label for="input-apikey">Gemini APIキー</label>
+            <input type="password" id="input-apikey" placeholder="AIza..." autocomplete="off">
+          </div>
+          <div class="field" style="flex: 0 0 auto;">
+            <button type="submit">APIキーを保存</button>
+          </div>
+        </form>
+        <div class="settings-note">APIキーを設定すると、目標保存時にAIコーチのコメントが表示されます。キーはこの端末のブラウザ内にのみ保存されます。</div>
+      </div>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>推移グラフ</h2>
+    <div class="tabs" id="range-tabs">
+      <button type="button" class="tab-btn" data-range="7">1週間</button>
+      <button type="button" class="tab-btn active" data-range="30">1ヶ月</button>
+      <button type="button" class="tab-btn" data-range="90">3ヶ月</button>
+      <button type="button" class="tab-btn" data-range="all">全期間</button>
+    </div>
+    <div class="chart-wrap" id="chart-wrap">
+      <canvas id="weight-chart"></canvas>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>記録一覧</h2>
+    <div class="table-scroll">
+      <table id="entry-table">
+        <thead>
+          <tr>
+            <th>日付</th>
+            <th>体重 (kg)</th>
+            <th>体脂肪率 (%)</th>
+            <th>前日比</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="entry-tbody"></tbody>
+      </table>
+      <div id="empty-msg" class="empty-msg" style="display:none;">記録がまだありません。</div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var STORAGE_KEY = 'weightTrackerData';
+  var chartInstance = null;
+  var currentRangeDays = 30; // 'all' or number
+
+  function loadData() {
+    var raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { goal: null, entries: {} };
+    try {
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') throw new Error('invalid');
+      if (typeof parsed.entries !== 'object' || parsed.entries === null) parsed.entries = {};
+      if (typeof parsed.goal !== 'number') parsed.goal = null;
+      if (typeof parsed.apiKey !== 'string' || parsed.apiKey === '') parsed.apiKey = null;
+      return parsed;
+    } catch (e) {
+      return { goal: null, entries: {} };
+    }
+  }
+
+  function saveData(data) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  var state = loadData();
+
+  function todayLocalISO() {
+    var d = new Date();
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function sortedDates() {
+    return Object.keys(state.entries).sort();
+  }
+
+  // ---- Form: entry ----
+  var entryForm = document.getElementById('entry-form');
+  var dateInput = document.getElementById('input-date');
+  var weightInput = document.getElementById('input-weight');
+  var fatInput = document.getElementById('input-fat');
+
+  dateInput.value = todayLocalISO();
+
+  entryForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var date = dateInput.value;
+    var weight = parseFloat(weightInput.value);
+    if (!date || isNaN(weight)) return;
+    var fatVal = fatInput.value.trim();
+    var fat = fatVal === '' ? null : parseFloat(fatVal);
+    if (fat !== null && isNaN(fat)) fat = null;
+
+    state.entries[date] = { weight: weight, fat: fat };
+    saveData(state);
+    fatInput.value = '';
+    weightInput.value = '';
+    dateInput.value = todayLocalISO();
+    renderAll();
+    if (date === todayLocalISO()) {
+      fetchCoachComment();
+    }
+  });
+
+  // ---- Form: goal ----
+  var goalForm = document.getElementById('goal-form');
+  var goalInput = document.getElementById('input-goal');
+  goalInput.value = (state.goal === null || state.goal === undefined) ? '' : state.goal;
+
+  goalForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var val = goalInput.value.trim();
+    state.goal = val === '' ? null : parseFloat(val);
+    if (state.goal !== null && isNaN(state.goal)) state.goal = null;
+    saveData(state);
+    renderAll();
+  });
+
+  // ---- Settings: API key ----
+  var settingsForm = document.getElementById('settings-form');
+  var apiKeyInput = document.getElementById('input-apikey');
+  apiKeyInput.value = state.apiKey || '';
+
+  settingsForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var key = apiKeyInput.value.trim();
+    state.apiKey = key === '' ? null : key;
+    saveData(state);
+  });
+
+  // ---- AI coach comment ----
+  var coachEl = document.getElementById('coach-comment');
+  var coachRequestSeq = 0;
+
+  function showCoachLoading() {
+    coachEl.className = 'coach-comment visible loading';
+    coachEl.textContent = 'AIコーチが考え中…';
+  }
+
+  function showCoachText(text) {
+    coachEl.className = 'coach-comment visible';
+    coachEl.innerHTML = '';
+    var icon = document.createElement('span');
+    icon.className = 'coach-icon';
+    icon.textContent = '💬';
+    coachEl.appendChild(icon);
+    coachEl.appendChild(document.createTextNode(text));
+  }
+
+  function showCoachError() {
+    coachEl.className = 'coach-comment visible error';
+    coachEl.textContent = 'コメントを取得できませんでした';
+  }
+
+  function buildCoachPrompt() {
+    var lines = [];
+    lines.push('あなたは体重管理アプリのコーチ。ユーザーが今日の体重を記録した。以下のデータを見て、今日の記録を受けた励ましと具体的アドバイスを1〜2文(80字以内)で返す。前置きや装飾なしで本文のみ。');
+    lines.push('');
+    if (state.goal !== null && state.goal !== undefined) {
+      lines.push('目標体重: ' + state.goal + 'kg');
+    }
+    var dates = sortedDates();
+    if (dates.length > 0) {
+      var latestDate = dates[dates.length - 1];
+      lines.push('最新体重: ' + state.entries[latestDate].weight + 'kg (' + latestDate + ')');
+      var recent = dates.slice(-7);
+      lines.push('直近の記録:');
+      recent.forEach(function (d) {
+        lines.push(d + ': ' + state.entries[d].weight + 'kg');
+      });
+    }
+    return lines.join('\n');
+  }
+
+  function fetchCoachComment() {
+    if (!state.apiKey) return; // APIキー未設定時は静かに無効化
+    var seq = ++coachRequestSeq;
+    showCoachLoading();
+
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(state.apiKey);
+    var body = {
+      contents: [{ parts: [{ text: buildCoachPrompt() }] }],
+      generationConfig: {
+        maxOutputTokens: 1000,
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    };
+
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).then(function (json) {
+      if (seq !== coachRequestSeq) return; // 古いリクエストは破棄
+      var parts = (json.candidates && json.candidates[0] &&
+                   json.candidates[0].content && json.candidates[0].content.parts) || [];
+      var text = parts.filter(function (p) { return !p.thought; })
+                      .map(function (p) { return p.text || ''; })
+                      .join('').trim();
+      if (text) {
+        showCoachText(text);
+      } else {
+        showCoachError();
+      }
+    }).catch(function () {
+      if (seq !== coachRequestSeq) return;
+      showCoachError();
+    });
+  }
+
+  // ---- Range tabs ----
+  var tabsEl = document.getElementById('range-tabs');
+  tabsEl.addEventListener('click', function (e) {
+    var btn = e.target.closest('.tab-btn');
+    if (!btn) return;
+    Array.prototype.forEach.call(tabsEl.querySelectorAll('.tab-btn'), function (b) {
+      b.classList.remove('active');
+    });
+    btn.classList.add('active');
+    var range = btn.getAttribute('data-range');
+    currentRangeDays = range === 'all' ? 'all' : parseInt(range, 10);
+    renderChart();
+  });
+
+  // ---- Table rendering ----
+  function renderTable() {
+    var tbody = document.getElementById('entry-tbody');
+    var emptyMsg = document.getElementById('empty-msg');
+    var dates = sortedDates();
+
+    tbody.innerHTML = '';
+
+    if (dates.length === 0) {
+      emptyMsg.style.display = 'block';
+      return;
+    }
+    emptyMsg.style.display = 'none';
+
+    var descDates = dates.slice().reverse();
+
+    descDates.forEach(function (date) {
+      var entry = state.entries[date];
+      var idx = dates.indexOf(date);
+      var prevDate = idx > 0 ? dates[idx - 1] : null;
+      var diffHtml = '<span class="diff-flat">—</span>';
+      if (prevDate) {
+        var prevWeight = state.entries[prevDate].weight;
+        var diff = entry.weight - prevWeight;
+        var diffRounded = Math.round(diff * 10) / 10;
+        if (Math.abs(diffRounded) < 0.05) {
+          diffHtml = '<span class="diff-flat">±0.0</span>';
+        } else if (diffRounded > 0) {
+          diffHtml = '<span class="diff-up">+' + diffRounded.toFixed(1) + '</span>';
+        } else {
+          diffHtml = '<span class="diff-down">' + diffRounded.toFixed(1) + '</span>';
+        }
+      }
+
+      var tr = document.createElement('tr');
+
+      var tdDate = document.createElement('td');
+      tdDate.textContent = date;
+      tr.appendChild(tdDate);
+
+      var tdWeight = document.createElement('td');
+      tdWeight.textContent = entry.weight.toFixed(1);
+      tr.appendChild(tdWeight);
+
+      var tdFat = document.createElement('td');
+      tdFat.textContent = (entry.fat === null || entry.fat === undefined) ? '—' : entry.fat.toFixed(1);
+      tr.appendChild(tdFat);
+
+      var tdDiff = document.createElement('td');
+      tdDiff.innerHTML = diffHtml;
+      tr.appendChild(tdDiff);
+
+      var tdDel = document.createElement('td');
+      var delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'danger';
+      delBtn.textContent = '削除';
+      delBtn.addEventListener('click', function () {
+        if (confirm(date + ' の記録を削除しますか?')) {
+          delete state.entries[date];
+          saveData(state);
+          renderAll();
+        }
+      });
+      tdDel.appendChild(delBtn);
+      tr.appendChild(tdDel);
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  // ---- Chart rendering ----
+  function isDarkMode() {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  function getThemeColors() {
+    if (isDarkMode()) {
+      return {
+        text: '#f2f2f3',
+        subText: '#9a9aa2',
+        grid: '#2c2c30',
+        weightLine: '#60a5fa',
+        fatLine: '#f472b6',
+        goalLine: '#34d399'
+      };
+    }
+    return {
+      text: '#1c1c1e',
+      subText: '#6b7280',
+      grid: '#e5e7eb',
+      weightLine: '#3b82f6',
+      fatLine: '#db2777',
+      goalLine: '#059669'
+    };
+  }
+
+  function filteredDates() {
+    var dates = sortedDates();
+    if (currentRangeDays === 'all') return dates;
+    var cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - (currentRangeDays - 1));
+    return dates.filter(function (d) {
+      var parts = d.split('-');
+      var dd = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      return dd >= cutoff;
+    });
+  }
+
+  function renderChart() {
+    var wrap = document.getElementById('chart-wrap');
+
+    if (typeof window.Chart === 'undefined') {
+      wrap.innerHTML = '<div class="chart-fallback">オフラインのためグラフを表示できません</div>';
+      return;
+    }
+
+    // ensure canvas exists (in case fallback replaced it previously)
+    if (!document.getElementById('weight-chart')) {
+      wrap.innerHTML = '<canvas id="weight-chart"></canvas>';
+    }
+
+    var dates = filteredDates();
+    var colors = getThemeColors();
+
+    var weights = dates.map(function (d) { return state.entries[d].weight; });
+    var fats = dates.map(function (d) {
+      var f = state.entries[d].fat;
+      return (f === null || f === undefined) ? null : f;
+    });
+    var hasFat = fats.some(function (f) { return f !== null; });
+
+    var datasets = [
+      {
+        label: '体重 (kg)',
+        data: weights,
+        borderColor: colors.weightLine,
+        backgroundColor: colors.weightLine,
+        yAxisID: 'yWeight',
+        spanGaps: true,
+        tension: 0.25,
+        pointRadius: 3
+      }
+    ];
+
+    if (hasFat) {
+      datasets.push({
+        label: '体脂肪率 (%)',
+        data: fats,
+        borderColor: colors.fatLine,
+        backgroundColor: colors.fatLine,
+        borderDash: [5, 4],
+        yAxisID: 'yFat',
+        spanGaps: true,
+        tension: 0.25,
+        pointRadius: 3
+      });
+    }
+
+    var weightVals = weights.filter(function (w) { return typeof w === 'number'; });
+    var minW = weightVals.length ? Math.min.apply(null, weightVals) : 0;
+    var maxW = weightVals.length ? Math.max.apply(null, weightVals) : 100;
+
+    if (state.goal !== null && state.goal !== undefined && dates.length > 0) {
+      datasets.push({
+        label: '目標体重',
+        data: dates.map(function () { return state.goal; }),
+        borderColor: colors.goalLine,
+        backgroundColor: colors.goalLine,
+        borderDash: [8, 5],
+        pointRadius: 0,
+        yAxisID: 'yWeight',
+        spanGaps: true
+      });
+      minW = Math.min(minW, state.goal);
+      maxW = Math.max(maxW, state.goal);
+    }
+
+    var suggestedMin = minW - 2;
+    var suggestedMax = maxW + 2;
+
+    var yAxes = {
+      yWeight: {
+        type: 'linear',
+        position: 'left',
+        suggestedMin: suggestedMin,
+        suggestedMax: suggestedMax,
+        title: { display: true, text: '体重 (kg)', color: colors.subText },
+        ticks: { color: colors.subText },
+        grid: { color: colors.grid }
+      }
+    };
+
+    if (hasFat) {
+      yAxes.yFat = {
+        type: 'linear',
+        position: 'right',
+        title: { display: true, text: '体脂肪率 (%)', color: colors.subText },
+        ticks: { color: colors.subText },
+        grid: { drawOnChartArea: false }
+      };
+    }
+
+    var config = {
+      type: 'line',
+      data: {
+        labels: dates,
+        datasets: datasets
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            labels: { color: colors.text }
+          }
+        },
+        scales: Object.assign({
+          x: {
+            ticks: { color: colors.subText },
+            grid: { color: colors.grid }
+          }
+        }, yAxes)
+      }
+    };
+
+    if (chartInstance) {
+      chartInstance.destroy();
+      chartInstance = null;
+    }
+
+    var canvas = document.getElementById('weight-chart');
+    chartInstance = new window.Chart(canvas, config);
+  }
+
+  function renderAll() {
+    renderTable();
+    renderChart();
+  }
+
+  // Re-render chart on OS theme change
+  if (window.matchMedia) {
+    var darkMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    var onThemeChange = function () { renderChart(); };
+    if (darkMediaQuery.addEventListener) {
+      darkMediaQuery.addEventListener('change', onThemeChange);
+    } else if (darkMediaQuery.addListener) {
+      darkMediaQuery.addListener(onThemeChange);
+    }
+  }
+
+  renderAll();
+})();
+</script>
+</body>
+</html>
