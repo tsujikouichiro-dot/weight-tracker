@@ -67,6 +67,13 @@
     text-align: center;
   }
 
+  #sync-status {
+    font-size: 0.78rem;
+    color: var(--text-sub);
+    text-align: center;
+    min-height: 1.2em;
+  }
+
   .card {
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -305,6 +312,7 @@
 <body>
 <div class="container">
   <h1>体重記録トラッカー</h1>
+  <div id="sync-status"></div>
 
   <section class="card">
     <h2>今日の記録を入力</h2>
@@ -355,6 +363,16 @@
           </div>
         </form>
         <div class="settings-note">APIキーを設定すると、目標保存時にAIコーチのコメントが表示されます。キーはこの端末のブラウザ内にのみ保存されます。</div>
+        <form id="ghtoken-form" class="goal-row">
+          <div class="field">
+            <label for="input-ghtoken">GitHubトークン(端末間同期)</label>
+            <input type="password" id="input-ghtoken" placeholder="github_pat_..." autocomplete="off">
+          </div>
+          <div class="field" style="flex: 0 0 auto;">
+            <button type="submit">トークンを保存</button>
+          </div>
+        </form>
+        <div class="settings-note">トークンを設定すると、記録がGitHubのプライベートリポジトリ(weight-data)に自動保存され、複数端末で共有できます。トークンはこの端末のブラウザ内にのみ保存されます。</div>
       </div>
     </details>
   </section>
@@ -416,16 +434,22 @@
 
   function loadData() {
     var raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { goal: null, entries: {} };
+    if (!raw) return { goal: null, goalT: 0, entries: {}, deleted: {} };
     try {
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') throw new Error('invalid');
       if (typeof parsed.entries !== 'object' || parsed.entries === null) parsed.entries = {};
+      Object.keys(parsed.entries).forEach(function (d) {
+        if (typeof parsed.entries[d].t !== 'number') parsed.entries[d].t = 0;
+      });
+      if (typeof parsed.deleted !== 'object' || parsed.deleted === null) parsed.deleted = {};
       if (typeof parsed.goal !== 'number') parsed.goal = null;
+      if (typeof parsed.goalT !== 'number') parsed.goalT = 0;
       if (typeof parsed.apiKey !== 'string' || parsed.apiKey === '') parsed.apiKey = null;
+      if (typeof parsed.githubToken !== 'string' || parsed.githubToken === '') parsed.githubToken = null;
       return parsed;
     } catch (e) {
-      return { goal: null, entries: {} };
+      return { goal: null, goalT: 0, entries: {}, deleted: {} };
     }
   }
 
@@ -464,12 +488,14 @@
     var fat = fatVal === '' ? null : parseFloat(fatVal);
     if (fat !== null && isNaN(fat)) fat = null;
 
-    state.entries[date] = { weight: weight, fat: fat };
+    state.entries[date] = { weight: weight, fat: fat, t: Date.now() };
+    delete state.deleted[date];
     saveData(state);
     fatInput.value = '';
     weightInput.value = '';
     dateInput.value = todayLocalISO();
     renderAll();
+    scheduleSync();
     if (date === todayLocalISO()) {
       fetchCoachComment();
     }
@@ -485,8 +511,10 @@
     var val = goalInput.value.trim();
     state.goal = val === '' ? null : parseFloat(val);
     if (state.goal !== null && isNaN(state.goal)) state.goal = null;
+    state.goalT = Date.now();
     saveData(state);
     renderAll();
+    scheduleSync();
   });
 
   // ---- Settings: API key ----
@@ -499,6 +527,23 @@
     var key = apiKeyInput.value.trim();
     state.apiKey = key === '' ? null : key;
     saveData(state);
+  });
+
+  // ---- Settings: GitHub sync token ----
+  var ghTokenForm = document.getElementById('ghtoken-form');
+  var ghTokenInput = document.getElementById('input-ghtoken');
+  ghTokenInput.value = state.githubToken || '';
+
+  ghTokenForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var token = ghTokenInput.value.trim();
+    state.githubToken = token === '' ? null : token;
+    saveData(state);
+    if (state.githubToken) {
+      syncNow();
+    } else {
+      setSyncStatus('');
+    }
   });
 
   // ---- Data transfer (export / import) ----
@@ -542,17 +587,225 @@
       var en = parsed.entries[d];
       if (!en || typeof en.weight !== 'number' || isNaN(en.weight)) return;
       var fat = (typeof en.fat === 'number' && !isNaN(en.fat)) ? en.fat : null;
-      state.entries[d] = { weight: en.weight, fat: fat };
+      state.entries[d] = { weight: en.weight, fat: fat, t: Date.now() };
+      delete state.deleted[d];
       count++;
     });
     if (typeof parsed.goal === 'number' && !isNaN(parsed.goal)) {
       state.goal = parsed.goal;
+      state.goalT = Date.now();
       goalInput.value = state.goal;
     }
     saveData(state);
     renderAll();
+    scheduleSync();
     transferStatus.textContent = count + '件の記録を取り込みました(同じ日付は取り込んだ内容で上書き)。';
   });
+
+  // ---- GitHub sync ----
+  var GH_OWNER = 'tsujikouichiro-dot';
+  var GH_REPO = 'weight-data';
+  var GH_FILE = 'data.json';
+  var GH_API_URL = 'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/contents/' + GH_FILE;
+
+  var syncStatusEl = document.getElementById('sync-status');
+  var syncing = false;
+  var syncQueued = false;
+  var syncDebounceTimer = null;
+
+  function setSyncStatus(text) {
+    syncStatusEl.textContent = text;
+  }
+
+  function b64EncodeUtf8(str) {
+    var bytes = new TextEncoder().encode(str);
+    var binary = '';
+    for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+
+  function b64DecodeUtf8(b64) {
+    var binary = atob(b64.replace(/\s/g, ''));
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  function stableStringify(value) {
+    if (Array.isArray(value)) {
+      return '[' + value.map(stableStringify).join(',') + ']';
+    } else if (value && typeof value === 'object') {
+      var keys = Object.keys(value).sort();
+      return '{' + keys.map(function (k) {
+        return JSON.stringify(k) + ':' + stableStringify(value[k]);
+      }).join(',') + '}';
+    }
+    return JSON.stringify(value);
+  }
+
+  // Pure merge: combines remote and local data using per-date last-write-wins.
+  // remote/local shape: { goal, goalT, entries: {date: {weight, fat, t}}, deleted: {date: t} }
+  function mergeData(remote, local) {
+    var remoteEntries = (remote && remote.entries) || {};
+    var remoteDeleted = (remote && remote.deleted) || {};
+    var localEntries = local.entries || {};
+    var localDeleted = local.deleted || {};
+
+    var dates = {};
+    Object.keys(remoteEntries).forEach(function (d) { dates[d] = true; });
+    Object.keys(remoteDeleted).forEach(function (d) { dates[d] = true; });
+    Object.keys(localEntries).forEach(function (d) { dates[d] = true; });
+    Object.keys(localDeleted).forEach(function (d) { dates[d] = true; });
+
+    var mergedEntries = {};
+    var mergedDeleted = {};
+
+    Object.keys(dates).forEach(function (d) {
+      var remoteEntry = remoteEntries[d];
+      var remoteDelT = remoteDeleted[d];
+      var localEntry = localEntries[d];
+      var localDelT = localDeleted[d];
+
+      var remoteT = Math.max(remoteEntry ? remoteEntry.t : -1, (typeof remoteDelT === 'number') ? remoteDelT : -1);
+      var localT = Math.max(localEntry ? localEntry.t : -1, (typeof localDelT === 'number') ? localDelT : -1);
+
+      var useLocal = localT >= remoteT; // tie goes to local
+
+      if (useLocal) {
+        if (localEntry) mergedEntries[d] = localEntry;
+        else if (typeof localDelT === 'number') mergedDeleted[d] = localDelT;
+      } else {
+        if (remoteEntry) mergedEntries[d] = remoteEntry;
+        else if (typeof remoteDelT === 'number') mergedDeleted[d] = remoteDelT;
+      }
+    });
+
+    var remoteGoalT = (remote && typeof remote.goalT === 'number') ? remote.goalT : -1;
+    var localGoalT = (typeof local.goalT === 'number') ? local.goalT : -1;
+    var useLocalGoal = localGoalT >= remoteGoalT; // tie goes to local
+    var goal = useLocalGoal ? local.goal : remote.goal;
+    var goalT = useLocalGoal ? (local.goalT || 0) : remote.goalT;
+
+    return { goal: goal, goalT: goalT, entries: mergedEntries, deleted: mergedDeleted };
+  }
+
+  function ghPull(token) {
+    return fetch(GH_API_URL, {
+      method: 'GET',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/vnd.github+json'
+      }
+    }).then(function (res) {
+      if (res.status === 200) {
+        return res.json().then(function (json) {
+          var text = b64DecodeUtf8(json.content);
+          var data = JSON.parse(text);
+          return { data: data, sha: json.sha };
+        });
+      } else if (res.status === 404) {
+        return { data: { goal: null, goalT: 0, entries: {}, deleted: {} }, sha: null };
+      } else if (res.status === 401 || res.status === 403) {
+        var authErr = new Error('auth');
+        authErr.authError = true;
+        throw authErr;
+      }
+      throw new Error('HTTP ' + res.status);
+    });
+  }
+
+  function ghPush(token, data, sha) {
+    var body = { message: 'sync', content: b64EncodeUtf8(JSON.stringify(data)) };
+    if (sha) body.sha = sha;
+    return fetch(GH_API_URL, {
+      method: 'PUT',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/vnd.github+json'
+      },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      if (res.status === 409 || res.status === 422) {
+        var conflictErr = new Error('conflict');
+        conflictErr.conflict = true;
+        throw conflictErr;
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    });
+  }
+
+  function finishSync(errorMsg) {
+    syncing = false;
+    if (errorMsg) {
+      setSyncStatus(errorMsg);
+    } else {
+      var now = new Date();
+      var hh = String(now.getHours()).padStart(2, '0');
+      var mm = String(now.getMinutes()).padStart(2, '0');
+      setSyncStatus('✓ 同期済み ' + hh + ':' + mm);
+    }
+    if (syncQueued) {
+      syncQueued = false;
+      syncNow();
+    }
+  }
+
+  function doSync(token, localSnapshot, isRetry) {
+    ghPull(token).then(function (remoteResult) {
+      var merged = mergeData(remoteResult.data, localSnapshot);
+
+      state.goal = merged.goal;
+      state.goalT = merged.goalT;
+      state.entries = merged.entries;
+      state.deleted = merged.deleted;
+      saveData(state);
+      renderAll();
+      goalInput.value = (state.goal === null || state.goal === undefined) ? '' : state.goal;
+
+      var mergedForPush = { goal: merged.goal, goalT: merged.goalT, entries: merged.entries, deleted: merged.deleted };
+      var needPush = (remoteResult.sha === null) ||
+        (stableStringify(remoteResult.data) !== stableStringify(mergedForPush));
+
+      if (needPush) {
+        return ghPush(token, mergedForPush, remoteResult.sha).then(function () {
+          finishSync(null);
+        });
+      }
+      finishSync(null);
+    }).catch(function (err) {
+      if (err && err.conflict && !isRetry) {
+        var freshSnapshot = { goal: state.goal, goalT: state.goalT || 0, entries: state.entries, deleted: state.deleted };
+        doSync(token, freshSnapshot, true);
+        return;
+      }
+      if (err && err.authError) {
+        finishSync('⚠ 同期エラー: トークンが無効です(権限とリポジトリ指定を確認)');
+      } else {
+        finishSync('⚠ 同期エラー');
+      }
+    });
+  }
+
+  function syncNow() {
+    if (!state.githubToken) return;
+    if (syncing) { syncQueued = true; return; }
+    syncing = true;
+    setSyncStatus('同期中…');
+
+    var token = state.githubToken;
+    var localSnapshot = { goal: state.goal, goalT: state.goalT || 0, entries: state.entries, deleted: state.deleted };
+    doSync(token, localSnapshot, false);
+  }
+
+  function scheduleSync() {
+    if (!state.githubToken) return;
+    if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = setTimeout(function () {
+      syncDebounceTimer = null;
+      syncNow();
+    }, 1500);
+  }
 
   // ---- AI coach comment ----
   var coachEl = document.getElementById('coach-comment');
@@ -711,8 +964,10 @@
       delBtn.addEventListener('click', function () {
         if (confirm(date + ' の記録を削除しますか?')) {
           delete state.entries[date];
+          state.deleted[date] = Date.now();
           saveData(state);
           renderAll();
+          scheduleSync();
         }
       });
       tdDel.appendChild(delBtn);
@@ -905,6 +1160,9 @@
   }
 
   renderAll();
+  if (state.githubToken) {
+    syncNow();
+  }
 })();
 </script>
 </body>
