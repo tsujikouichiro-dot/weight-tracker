@@ -730,6 +730,12 @@
         conflictErr.conflict = true;
         throw conflictErr;
       }
+      if (res.status === 404) {
+        // fine-grained PATが対象リポジトリを含まない場合、401ではなく404が返る
+        var accessErr = new Error('access');
+        accessErr.accessError = true;
+        throw accessErr;
+      }
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return res.json();
     });
@@ -781,6 +787,8 @@
       }
       if (err && err.authError) {
         finishSync('⚠ 同期エラー: トークンが無効です(権限とリポジトリ指定を確認)');
+      } else if (err && err.accessError) {
+        finishSync('⚠ 同期エラー: リポジトリに書き込めません。トークン設定の対象リポジトリに weight-data が含まれているか確認してください');
       } else {
         finishSync('⚠ 同期エラー');
       }
